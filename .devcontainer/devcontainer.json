@@ -16,7 +16,7 @@
         ]
       }
     },
-    "updateContentCommand": "[ -f packages.txt ] && sudo apt update && sudo apt upgrade -y && sudo xargs apt install -y <packages.txt; [ -f environment/requirements.txt ] && pip3 install --user -r environment/requirements.txt; pip3 install --user streamlit; echo '✅ Packages installed and Requirements met'",
+    "updateContentCommand": "[ -f packages.txt ] && sudo apt update && sudo apt upgrade -y && sudo xargs apt install -y <packages.txt; [ -f app/requirements.txt ] && pip3 install --user -r app/requirements.txt; pip3 install --user streamlit; echo '✅ Packages installed and Requirements met'",
     "portsAttributes": {
       "8501": {
         "label": "Application",
