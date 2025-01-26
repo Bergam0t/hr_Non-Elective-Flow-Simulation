@@ -16,3 +16,4 @@ nbformat>=4.2.0
 sim-tools==0.6.1
 seaborn==0.13.2
 scipy==1.14.1
+vidigi==0.0.4
