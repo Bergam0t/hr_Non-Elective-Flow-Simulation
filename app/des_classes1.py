@@ -134,6 +134,7 @@ class Model:
             
         # If the result of the queue was increase of priority
         elif patient.priority_update < patient.renege_time:
+            self.nelbed.put(bed_resource) # TEST SR - Think original bed request may need to go back in at this point?
             patient.priority = patient.priority - 2.2 #arbitrary priority increase
             self.event_log.append(
             {'patient' : patient.id,
@@ -169,6 +170,7 @@ class Model:
         
     # # If patient reneges
         else:
+            self.nelbed.put(bed_resource) # TEST SR - Think original bed request may need to go back in at this point?
             self.event_log.append(
                 {'patient' : patient.id,
                 'pathway' : patient.department,
