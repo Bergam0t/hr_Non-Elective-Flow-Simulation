@@ -107,6 +107,8 @@ class Model:
         result_of_queue = (yield bed_resource | # they get a bed
                             self.env.timeout(patient.renege_time)| # they renege
                             self.env.timeout(patient.priority_update)) # they become higher priority
+        
+        # print(result_of_queue)
 
         if bed_resource in result_of_queue:
             self.event_log.append(
@@ -131,10 +133,11 @@ class Model:
             )
 
             self.nelbed.put(bed_resource)
+            #print(f"{len(self.nelbed.items)} beds now available")
             
         # If the result of the queue was increase of priority
         elif patient.priority_update < patient.renege_time:
-            self.nelbed.put(bed_resource) # TEST SR - Think original bed request may need to go back in at this point?
+            bed_resource.cancel() # SR - Think we need to ensure original request is cancelled at this point
             patient.priority = patient.priority - 2.2 #arbitrary priority increase
             self.event_log.append(
             {'patient' : patient.id,
@@ -145,7 +148,7 @@ class Model:
             }
             )
         #     # Make another bed request with new priority
-            bed_resource = yield self.nelbed.get(priority=patient.priority)
+            bed_resource_new = yield self.nelbed.get(priority=patient.priority)
             self.event_log.append(
             {'patient' : patient.id,
             'pathway' : patient.department,
@@ -158,6 +161,8 @@ class Model:
             sampled_bed_time = self.mean_time_in_bed_dist.sample()
             yield self.env.timeout(sampled_bed_time)
 
+            self.nelbed.put(bed_resource_new)
+
             self.event_log.append(
             {'patient' : patient.id,
             'pathway' : patient.department,
@@ -166,11 +171,14 @@ class Model:
             'time' : self.env.now}
             )
 
-            self.nelbed.put(bed_resource)
+            
+            #print(f"{len(self.nelbed.items)} beds now available")
         
     # # If patient reneges
         else:
-            self.nelbed.put(bed_resource) # TEST SR - Think original bed request may need to go back in at this point?
+            bed_resource.cancel() # SR - Think we need to ensure original request is cancelled at this point
+            #print(f"{len(self.nelbed.items)} beds now available")
+
             self.event_log.append(
                 {'patient' : patient.id,
                 'pathway' : patient.department,
@@ -231,6 +239,7 @@ class Model:
             )
 
             self.nelbed.put(bed_resource)
+            #print(f"{len(self.nelbed.items)} beds now available")
 
         self.event_log.append(
         {'patient' : patient.id,
