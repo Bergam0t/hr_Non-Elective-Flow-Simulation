@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 
 from des_classes1 import g, Trial
 
+from vidigi.prep import reshape_for_animations
+
 #Initialise session state
 if 'button_click_count' not in st.session_state:
   st.session_state.button_click_count = 0
@@ -41,6 +43,8 @@ g.ed_inter_visit = 1440/daily_ed_adm_slider
 g.sdec_inter_visit = 1440/daily_sdec_adm_slider
 g.other_inter_visit = 1440/daily_other_adm_slider
 g.number_of_runs = num_runs_slider
+
+g.sim_duration = 86400 * 2
 
 tab1, tab_animate, tab2 = st.tabs(["Run the model", "Animation", "Compare scenarios"])
 
@@ -142,7 +146,42 @@ with tab1:
 
 with tab_animate:
     st.write("Animation of the latest scenario goes here")
+
+    if button_run_pressed:
+
+        st.write(all_event_logs)
+
+        anim_df_test = reshape_for_animations(
+            all_event_logs[all_event_logs["run"]==0], 
+            limit_duration=g.sim_duration,
+            step_snapshot_max=g.number_of_nelbeds*1.1
+            )
         
+        st.write(anim_df_test.head(5000))
+
+        bed_use_counts_df = anim_df_test[anim_df_test["event_type"]=="resource_use"][['minute']].value_counts().reset_index(name='count').sort_values('minute')
+
+        # st.write(bed_use_counts_df)
+
+        st.plotly_chart(px.line(
+            bed_use_counts_df,
+            x="minute",
+            y="count",
+        title="Beds In Use Over Time"
+        ).add_hline(y=g.number_of_nelbeds, line_dash="dash", line_color="green"))
+
+        bed_use_counts_pathways_df = anim_df_test[anim_df_test["event_type"]=="resource_use"][['pathway','minute']].value_counts().reset_index(name='count').sort_values(['pathway','minute'])
+        
+        # st.write(bed_use_counts_pathways_df)
+
+        st.plotly_chart(px.bar(
+            bed_use_counts_pathways_df,
+            x="minute",
+            y="count",
+            color="pathway",
+        title="Beds In Use Over Time - By Entry Route"
+        ).add_hline(y=g.number_of_nelbeds, line_dash="dash", line_color="green"))
+
 with tab2:
     st.write(f"You've run {st.session_state.button_click_count} scenarios")
 
