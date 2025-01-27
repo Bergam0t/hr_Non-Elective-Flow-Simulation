@@ -173,7 +173,7 @@ with tab_animate:
         title="Beds In Use Over Time"
         ).add_hline(y=g.number_of_nelbeds, line_dash="dash", line_color="green"))
 
-        bed_use_counts_pathways_df = anim_df_test[anim_df_test["event_type"]=="resource_use"][['pathway','minute']].value_counts().reset_index(name='count').sort_values('minute')
+        bed_use_counts_pathways_df = anim_df_test[anim_df_test["event_type"]=="resource_use"][['pathway','minute']].value_counts().reset_index(name='count').sort_values(['pathway','minute'])
         
         # st.write(bed_use_counts_pathways_df)
 
