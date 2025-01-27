@@ -24,8 +24,10 @@ st.header("(work in progress)")
 with st.sidebar:
     mean_los_slider = st.slider("Adjust the mean los in hours",
                                 min_value=100, max_value=300, value=225)
+    st.caption(f"This is an average stay of roughly {mean_los_slider/60:.1f} days")
     sd_los_slider = st.slider("Adjust the los standard deviation",
                                 min_value=250, max_value=500, value=405)
+    st.caption(f"This is an SD of roughly {sd_los_slider/60:.1f} days")
     num_nelbeds_slider = st.slider("Adjust the number of beds available",
                                 min_value=300, max_value=500, value=434)
     daily_ed_adm_slider = st.slider("Adjust the average number of admissions via ED per day",
