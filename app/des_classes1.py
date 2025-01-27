@@ -108,9 +108,12 @@ class Model:
             result_of_queue = (yield req | # they get a bed
                                self.env.timeout(patient.renege_time) | # they renege
                                self.env.timeout(patient.priority_update)) # they become higher priority
+            
+            print(f"{patient.id} - {result_of_queue}")
 
             # if the result is they get a bed, record the relevant details
             if req in result_of_queue:
+                print(f"{patient.id}: **Admitted**")
                 self.event_log.append(
                 {'patient' : patient.id,
                 'pathway' : patient.department,
@@ -139,10 +142,14 @@ class Model:
                 'event' : 'depart',
                 'time' : self.env.now}
                 )
-            
-            # If the result of the queue was increase of priority
-            elif patient.priority_update < patient.renege_time:
+
+        # If the result of the queue was increase of priority
+        if req not in result_of_queue:
+            if (patient.priority_update < patient.renege_time):
+                print(f"{patient.id}: **Upgrading priority**")
+
                 patient.priority = patient.priority - 2.2 #arbitrary deterioration
+                
                 self.event_log.append(
                 {'patient' : patient.id,
                 'pathway' : patient.department,
@@ -152,8 +159,9 @@ class Model:
                 }
                 )
                 # Make another bed request with new priority
-                with self.nelbed.request(priority=patient.priority) as req:
-                    yield req
+                with self.nelbed.request(priority=patient.priority) as req_new:
+                    yield req_new
+                    print(f"{patient.id}: **Admitted After Priority Upgrade**")
                     self.event_log.append(
                     {'patient' : patient.id,
                     'pathway' : patient.department,
@@ -181,9 +189,8 @@ class Model:
                     'event' : 'depart',
                     'time' : self.env.now}
                     )
-            
-            # If patient reneges
             else:
+                print(f"{patient.id}: **Reneged**")
                 self.event_log.append(
                     {'patient' : patient.id,
                     'pathway' : patient.department,
@@ -200,6 +207,8 @@ class Model:
                     'event' : 'depart',
                     'time' : self.env.now}
                     )
+        
+ 
     
     def attend_other(self, patient):
         self.event_log.append(
