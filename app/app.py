@@ -45,6 +45,8 @@ g.sdec_inter_visit = 1440/daily_sdec_adm_slider
 g.other_inter_visit = 1440/daily_other_adm_slider
 g.number_of_runs = num_runs_slider
 
+g.sim_duration = 86400 * 2
+
 tab1, tab_animate, tab2 = st.tabs(["Run the model", "Animation", "Compare scenarios"])
 
 
