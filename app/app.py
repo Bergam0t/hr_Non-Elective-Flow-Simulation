@@ -156,6 +156,7 @@ with tab_animate:
 
         anim_df_test = reshape_for_animations(
             all_event_logs[all_event_logs["run"]==0], 
+            every_x_time_units=60,
             limit_duration=g.sim_duration,
             step_snapshot_max=g.number_of_nelbeds*1.1
             )
