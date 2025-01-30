@@ -107,8 +107,10 @@ class Model:
         result_of_queue = (yield bed_resource | # they get a bed
                             self.env.timeout(patient.renege_time)| # they renege
                             self.env.timeout(patient.priority_update)) # they become higher priority
-        
-        # print(result_of_queue)
+
+        # print(f"{patient.id}: result_of_queue: {result_of_queue}")
+        # print(f"{patient.id}: bed_resource: {result_of_queue[bed_resource]}")
+        # print(f"{patient.id}: ID attribute of resource is {result_of_queue[bed_resource].id_attribute}")
 
         if bed_resource in result_of_queue:
             self.event_log.append(
@@ -116,9 +118,14 @@ class Model:
             'pathway' : patient.department,
             'event_type' : 'resource_use',
             'event' : 'admission_begins',
-            'time' : self.env.now
+            'time' : self.env.now,
+            'resource_id' : result_of_queue[bed_resource].id_attribute 
             }
             )
+
+            #print(f"{patient.id}: {result_of_queue}")
+            #print(f"{patient.id}: {bed_resource}")
+            #print(f"{patient.id}: ID attribute of resource is {result_of_queue[bed_resource].id_attribute}")
                     
             sampled_bed_time = self.mean_time_in_bed_dist.sample()
             yield self.env.timeout(sampled_bed_time)
@@ -128,12 +135,13 @@ class Model:
             'pathway' : patient.department,
             'event_type' : 'resource_use_end',
             'event' : 'admission_complete',
-            'time' : self.env.now
+            'time' : self.env.now,
+            'resource_id' : result_of_queue[bed_resource].id_attribute
             }
             )
 
-            self.nelbed.put(bed_resource)
-            #print(f"{len(self.nelbed.items)} beds now available")
+            print(f"Putting back bed of type {result_of_queue[bed_resource]} from pathway STANDARD")
+            self.nelbed.put(result_of_queue[bed_resource])
             
         # If the result of the queue was increase of priority
         elif patient.priority_update < patient.renege_time:
@@ -155,12 +163,14 @@ class Model:
             'event_type' : 'resource_use',
             'event' : 'admission_begins',
             'time' : self.env.now,
+            'resource_id' : bed_resource_new.id_attribute
             }
             )
             
             sampled_bed_time = self.mean_time_in_bed_dist.sample()
             yield self.env.timeout(sampled_bed_time)
 
+            print(f"**Putting upgraded priority bed back in from pathway PRIORITY UPGRADE: type {bed_resource_new}")
             self.nelbed.put(bed_resource_new)
 
             self.event_log.append(
@@ -168,17 +178,14 @@ class Model:
             'pathway' : patient.department,
             'event_type' : 'resource_use_end',
             'event' : 'admission_complete',
-            'time' : self.env.now}
+            'time' : self.env.now,
+            'resource_id' : bed_resource_new.id_attribute
+            }
             )
-
-            
-            #print(f"{len(self.nelbed.items)} beds now available")
         
     # # If patient reneges
         else:
             bed_resource.cancel() # SR - Think we need to ensure original request is cancelled at this point
-            #print(f"{len(self.nelbed.items)} beds now available")
-
             self.event_log.append(
                 {'patient' : patient.id,
                 'pathway' : patient.department,
@@ -213,33 +220,33 @@ class Model:
              'time' : self.env.now}
         )
 
-        #bed_resource = yield self.nelbed.get(priority=patient.priority)
-        with self.nelbed.get(priority=patient.priority) as bed_resource:
-            yield bed_resource
+        bed_resource = yield self.nelbed.get(priority=patient.priority)
 
-            self.event_log.append(
-                {'patient' : patient.id,
-                'pathway' : patient.department,
-                'event_type' : 'resource_use',
-                'event' : 'admission_begins',
-                'time' : self.env.now
-                }
-                )
-            
-            sampled_bed_time = self.mean_time_in_bed_dist.sample()
-            yield self.env.timeout(sampled_bed_time)
-
-            self.event_log.append(
+        self.event_log.append(
             {'patient' : patient.id,
             'pathway' : patient.department,
-            'event_type' : 'resource_use_end',
-            'event' : 'admission_complete',
-            'time' : self.env.now
+            'event_type' : 'resource_use',
+            'event' : 'admission_begins',
+            'time' : self.env.now,
+            'resource_id' : bed_resource.id_attribute
             }
             )
+        
+        sampled_bed_time = self.mean_time_in_bed_dist.sample()
+        yield self.env.timeout(sampled_bed_time)
 
-            self.nelbed.put(bed_resource)
-            #print(f"{len(self.nelbed.items)} beds now available")
+        self.event_log.append(
+        {'patient' : patient.id,
+        'pathway' : patient.department,
+        'event_type' : 'resource_use_end',
+        'event' : 'admission_complete',
+        'time' : self.env.now,
+        'resource_id' : bed_resource.id_attribute
+        }
+        )
+
+        print(f"Putting bed of type {bed_resource} in from OTHER pathway")
+        self.nelbed.put(bed_resource)
 
         self.event_log.append(
         {'patient' : patient.id,
