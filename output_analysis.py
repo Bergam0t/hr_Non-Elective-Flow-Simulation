@@ -55,18 +55,21 @@ display(all_event_logs.tail(1000))
 # fig.show()
 
 ############ANIMATION#################################################
-print(all_event_logs['event_type'].unique())
-filtered_logs = all_event_logs[(all_event_logs['event_type'] != 'other') & 
-                               (all_event_logs['pathway'] == 'ED')]
+
+#print(all_event_logs['event_type'].unique())
+filtered_logs = all_event_logs[all_event_logs['event_type'] != 'other']# & 
+                               #(all_event_logs['time'] > 100000) &
+                               #(all_event_logs['time'] < 102000)]
+
 filtered_logs.head()
 
-STEP_SNAPSHOT_MAX = 45
-LIMIT_DURATION = 5000
+STEP_SNAPSHOT_MAX = g.number_of_nelbeds * 1.1 # ensure this exceeds number of beds
+LIMIT_DURATION = g.sim_duration + g.warm_up_period
 WRAP_QUEUES_AT = 15
 
 reshaped_logs = reshape_for_animations(
     event_log=filtered_logs[filtered_logs['run']==0],
-    every_x_time_units=2,
+    every_x_time_units=30, # set to every hour as sim is in minutes
     step_snapshot_max=STEP_SNAPSHOT_MAX,
     limit_duration=LIMIT_DURATION,
     debug_mode=True
@@ -79,51 +82,93 @@ event_position_df = pd.DataFrame([
                      'x':  50, 'y': 300,
                      'label': "Arrival" },
 
-                    # Triage - minor and trauma
-                    {'event': 'admission_wait_begins',
-                     'x':  205, 'y': 275,
+                     {'event': 'admission_wait_begins',
+                     'x':  205, 'y': 75,
+                     'label': "Waiting for Admission"},
+
+                    {'event': 'sdec_admission_wait_begins',
+                     'x':  205, 'y': 475,
+                     'label': "Waiting for Admission"},
+
+                     {'event': 'other_admission_wait_begins',
+                     'x':  205, 'y': 700,
                      'label': "Waiting for Admission"},
 
                     {'event': 'admission_begins',
-                     'x':  205, 'y': 175,
+                     'x':  505, 'y': 75,
                      'resource':'number_of_nelbeds',
                      'label': "Admitted"},
 
                     {'event': 'exit',
-                     'x':  270, 'y': 70,
+                     'x':  670, 'y': 70,
                      'label': "Exit"}
 
                 ])
 
-position_logs = generate_animation_df(full_patient_df=reshaped_logs,
+def adapt_event(row):
+        if "admission_wait_begins" in row["event"]:
+                if row["pathway"] == "SDEC":
+                        return "sdec_admission_wait_begins"
+                elif row["pathway"] == "Other":
+                        return "other_admission_wait_begins"
+                else:
+                        return row["event"]
+        else:
+                return row["event"]
+            
+reshaped_logs2 = reshaped_logs.assign(
+            event=reshaped_logs.apply(adapt_event, axis=1)
+            )
+
+position_logs = generate_animation_df(full_patient_df=reshaped_logs2,
                                                  event_position_df=event_position_df,
                                                  wrap_queues_at=WRAP_QUEUES_AT,
                                                  step_snapshot_max=STEP_SNAPSHOT_MAX,
-                                                 gap_between_entities=1,
-                                                 gap_between_resources=1,
-                                                 gap_between_rows=1,
+                                                 gap_between_entities=10, # need this and resource gap to be consistent
+                                                 gap_between_resources=10, # if changing this, also need to specify in generate_animation 
+                                                 gap_between_rows=30, # if changing this, also need to specify in generate_animation  
                                                  debug_mode=True
                                                  )
 
 position_logs.sort_values(['patient', 'minute']).head(150)
 
+filtered_position_logs = position_logs[(position_logs['minute'] > 120000) & (position_logs['minute'] < 150000)]
+
+filtered_position_logs.sort_values(['patient', 'minute']).head(150)
+
+def show_priority_icon(row):
+        if "more" not in row["icon"]:
+                if row["pathway"] == "SDEC":
+                        return "🔴"
+                elif row["pathway"] == "Other":
+                        return "🟣"
+                else:
+                        return row["icon"]
+        else:
+                    return row["icon"]
+            
+filtered_position_logs2 = filtered_position_logs.assign(
+            icon=filtered_position_logs.apply(show_priority_icon, axis=1)
+            )
+
 generate_animation(
-        full_patient_df_plus_pos=position_logs.sort_values(['patient', 'minute']),
+        full_patient_df_plus_pos=filtered_position_logs2.sort_values(['patient', 'minute']),
         event_position_df= event_position_df,
         scenario=g(),
         debug_mode=True,
-        setup_mode=False,
+        setup_mode=False, # turns on and off gridlines
         include_play_button=True,
-        icon_and_text_size= 20,
-        plotly_height=1200,
-        frame_duration=800,
-        frame_transition_duration=200,
+        icon_and_text_size= 16,
+        plotly_height=800,
+        frame_duration=600,
+        frame_transition_duration=600,
         plotly_width=1500,
-        override_x_max=300,
-        override_y_max=500,
-        time_display_units="dhm",
+        override_x_max=600,
+        override_y_max=900,
+        #time_display_units="dhm",
         display_stage_labels=False,
-        #add_background_image="img/example.png",
+        custom_resource_icon='⚬',
+        add_background_image="img/sq8.png"
     )
 
 ###################HISTOGRAM###########################################################
