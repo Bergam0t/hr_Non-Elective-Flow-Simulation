@@ -20,7 +20,15 @@ pack(
     ],
     prepend_github_path="bergam0t/hr_non-elective-flow-simulation",
     output_dir="..",
-    use_raw_api=True
+    use_raw_api=True,
+    js_bundle_version="0.89.0",
+    stylesheet_version="0.89.0"
     )
 
-setup_github_pages(mode="gh-actions", output_dir="..", use_docs=False)
+setup_github_pages(
+    mode="gh-actions",
+    output_dir="..",
+    use_docs=False,
+    # create_nojekyll=True
+    create_nojekyll=False
+    )
