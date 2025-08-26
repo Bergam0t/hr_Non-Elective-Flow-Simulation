@@ -9,6 +9,7 @@
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/@stlite/browser@0.89.0/build/style.css"
     />
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   </head>
   <body>
     <div id="root"></div>
@@ -1225,6 +1226,8 @@ with tab1:
 
     if button_run_pressed:
         with st.spinner("Simulating the system"):
+            import asyncio
+            await asyncio.sleep(0.1)
             all_event_logs, patient_df, run_summary_df, trial_summary_df = Trial().run_trial()
 
             # Adding to session state objects so we can compare scenarios
@@ -1345,6 +1348,8 @@ with tab1:
 
 with tab_animate:
     with st.spinner("Generating animation"):
+        import asyncio
+        await asyncio.sleep(0.1)
 
         if 'all_event_logs' in globals():
             animation = animate(all_event_logs)
