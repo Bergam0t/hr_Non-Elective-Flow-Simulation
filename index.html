@@ -9,7 +9,6 @@
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/@stlite/browser@0.89.0/build/style.css"
     />
-    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   </head>
   <body>
     <div id="root"></div>
@@ -191,7 +190,7 @@ def animate(logs):
                 icon=filtered_position_logs.apply(show_priority_icon, axis=1)
                 )
 
-    # This is a random comment to force a redeploy...
+
     #today_date = dt.date.today() - pd.DateOffset(days=165)
     #formatted_date = today_date.strftime("%Y-%m-%d")
     animation = generate_animation(
@@ -1227,7 +1226,7 @@ with tab1:
     if button_run_pressed:
         with st.spinner("Simulating the system"):
             import asyncio
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(1)
             all_event_logs, patient_df, run_summary_df, trial_summary_df = Trial().run_trial()
 
             # Adding to session state objects so we can compare scenarios
@@ -1266,7 +1265,7 @@ with tab1:
                          '48hr LoS Breaches (per day)', '72hr LoS Breaches (per day)']
             trial_summary_df=trial_summary_df[trial_summary_df.index.isin(metrics)]
 
-            st.dataframe(trial_summary_df)
+            st.table(trial_summary_df)
             ###################
 
             #filter dataset to ED
@@ -1335,7 +1334,7 @@ with tab1:
                 st.write("Waiting times cannot be plotted on a histogram as there are no significant waits for admission")
 
             st.write("This is a table of metrics for each individual run")
-            st.dataframe(run_summary_df)
+            st.table(run_summary_df)
 
             # run5_df = ed_df_nowarmup[ed_df_nowarmup['run'] == 6]
 
@@ -1349,7 +1348,7 @@ with tab1:
 with tab_animate:
     with st.spinner("Generating animation"):
         import asyncio
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(1)
 
         if 'all_event_logs' in globals():
             animation = animate(all_event_logs)
@@ -1373,7 +1372,7 @@ with tab_animate:
                     file_name="plot.html",
                     mime="text/html"
                 )
-            #st.dataframe(reshaped_logs)
+            #st.table(reshaped_logs)
 
 with tab2:
     st.write(f"You've run {st.session_state.button_click_count} scenarios")
@@ -1382,11 +1381,11 @@ with tab2:
     if st.session_state.button_click_count > 0:
         st.write("Here are your inputs for each scenario")
         current_i_df = pd.DataFrame(st.session_state['session_inputs']).T
-        st.dataframe(current_i_df)
+        st.table(current_i_df)
 
         st.write("Here are your results for each scenario")
         current_state_df = pd.DataFrame(st.session_state['session_results']).T
-        st.dataframe(current_state_df)
+        st.table(current_state_df)
 
         plot_df = pd.DataFrame(st.session_state['session_results'])
 
@@ -1415,6 +1414,9 @@ url: "https://raw.githubusercontent.com/bergam0t/hr_non-elective-flow-simulation
 },
 "sq8.png": {
 url: "https://raw.githubusercontent.com/bergam0t/hr_non-elective-flow-simulation/refs/heads/main/sq8.png"
+},
+"MaterialSymbolsRounded[FILL,GRAD,opsz,wght].woff2": {
+url: "https://raw.githubusercontent.com/bergam0t/hr_non-elective-flow-simulation/refs/heads/main/MaterialSymbolsRounded[FILL,GRAD,opsz,wght].woff2"
 }
           },
         },
