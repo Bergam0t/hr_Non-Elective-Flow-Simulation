@@ -48,12 +48,13 @@ pack(
     # and is necessary to use for more complex features of stlitepack, like file linking
     use_raw_api=True,
     # stlitepack defaults to a slightly older version of stlite
-    # We're going to request the newest version at the time of writing instead
-    js_bundle_version="0.89.0",
-    stylesheet_version="0.89.0",
-    # We're experiencing an odd bug with dataframe display that is quite common - so we will
+    # We're going to request a version that's known to work particularly well (as versions either
+    # side sometimes experience issues with either plotly plots displaying, or dataframes displaying)
+    js_bundle_version="0.80.5",
+    stylesheet_version="0.80.5",
+    # We're experiencing an odd bug with dataframe display that is quite common - so we can
     # work around this by changing any dataframes to tables instead
-    replace_df_with_table=True,
+    replace_df_with_table=False,
     # Finally, we'll request to run a preview server so we can display the created app
     run_preview_server=True
     )
