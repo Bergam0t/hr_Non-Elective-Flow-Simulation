@@ -18,6 +18,7 @@ __pycache__/
 
 # Exclude output file types
 *.html
+!index.html
 
 # Jupyter Notebook
 .ipynb_checkpoints

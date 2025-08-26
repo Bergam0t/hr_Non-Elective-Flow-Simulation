@@ -1,0 +1,1420 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <title>App</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@stlite/browser@0.84.1/build/style.css"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      import { mount } from "https://cdn.jsdelivr.net/npm/@stlite/browser@0.84.1/build/stlite.js";
+      mount(
+        {
+          
+          requirements: ["plotly", "vidigi==0.0.4", "seaborn", "sim-tools"],
+          entrypoint: "launch.py",
+          files: {
+"launch.py": `
+import streamlit as st
+
+pg = st.navigation([
+        st.Page("home_page.py", title="Welcome!", icon=":material/add_circle:"),
+        st.Page("sim_page.py", title="Run Virtual Hospital", icon=":material/laptop:"),
+        st.Page("more_info_page.py", title="More Information", icon=":material/book:")
+     ])
+
+pg.run()
+            `,
+"animation.py": `
+import pandas as pd
+import numpy as np
+from vidigi.prep import reshape_for_animations, generate_animation_df
+from vidigi.animation import generate_animation
+from model import g
+import time
+#import datetime as dt
+#from model import Trial #for debugging
+
+
+def animate(logs):
+    start_time = time.time()
+    print(f'animation function started {time.strftime("%H:%M:%S", time.gmtime(start_time))}')
+
+    logs = logs[logs['run']==0]
+    #logs['time'] = logs['time'] - g.warm_up_period
+    warmup_patients = logs[(logs['event']=="depart") & (logs['time']<=g.warm_up_period)]
+    logs=logs[~logs['patient'].isin(warmup_patients['patient'])]
+    min_time=logs['time'].min()
+    logs['time']=logs['time']-(min_time + (432000-min_time))
+
+
+    STEP_SNAPSHOT_MAX = g.number_of_nelbeds * 1.1 # ensure this exceeds number of beds
+    LIMIT_DURATION = 10080
+    WRAP_QUEUES_AT = 15
+    X_TIME_UNITS = 30
+
+
+    reshaped_logs = reshape_for_animations(
+    event_log=logs,
+    every_x_time_units=X_TIME_UNITS,
+    step_snapshot_max=STEP_SNAPSHOT_MAX,
+    limit_duration=LIMIT_DURATION,
+    debug_mode=True
+    )
+
+    event_position_df = pd.DataFrame([
+                    {'event': 'arrival',
+                     'x':  -20, 'y': 200,
+                     'label': "Arrival" },
+
+                     {'event': 'sdec_arrival',
+                     'x':  -20, 'y': 525,
+                     'label': "Arrival" },
+
+                     {'event': 'other_arrival',
+                     'x':  -20, 'y': 730,
+                     'label': "Arrival" },
+
+                     {'event': 'admission_wait_begins',
+                     'x':  205, 'y': 75,
+                     'label': "Waiting for Admission"},
+
+                    {'event': 'sdec_admission_wait_begins',
+                     'x':  205, 'y': 475,
+                     'label': "Waiting for Admission"},
+
+                     {'event': 'other_admission_wait_begins',
+                     'x':  205, 'y': 700,
+                     'label': "Waiting for Admission"},
+
+                    {'event': 'admission_begins',
+                     'x':  505, 'y': 75,
+                     'resource':'number_of_nelbeds',
+                     'label': "Admitted"},
+
+                    {'event': 'exit',
+                     'x':  670, 'y': 70,
+                     'label': "Exit"}
+
+                ])
+    
+    # Assign different waiting locations to 3 kinds of attendance
+    def adapt_event(row):
+            if "admission_wait_begins" in row["event"]:
+                    if row["pathway"] == "SDEC":
+                            return "sdec_admission_wait_begins"
+                    elif row["pathway"] == "Other":
+                            return "other_admission_wait_begins"
+                    else:
+                            return row["event"]
+            else:
+                    return row["event"]
+                
+    reshaped_logs2 = reshaped_logs.assign(
+                event=reshaped_logs.apply(adapt_event, axis=1)
+                )
+
+    # Add an admission wait for each patient that doesn't have one
+    first_step = reshaped_logs2.sort_values(["patient", "minute"], ascending=True) \
+                    .groupby(["patient"]) \
+                    .head(1)
+
+    first_step['minute'] = first_step['minute'] - X_TIME_UNITS
+
+    conditions = [
+        ((first_step['pathway'] == "ED") & (first_step['event_type'] == "resource_use")),   
+        ((first_step['pathway'] == "SDEC") & (first_step['event_type'] == "resource_use")),
+            ((first_step['pathway'] == "Other") & (first_step['event_type'] == "resource_use"))
+    ]
+    choices = ['admission_wait_begins', 'sdec_admission_wait_begins', 'other_admission_wait_begins']
+
+    first_step['event'] = np.select(conditions, choices, default=first_step['event'])
+    first_step['event_type'] = "queue"
+
+    reshaped_logs2 = pd.concat([reshaped_logs2, first_step], ignore_index=True)
+
+    # Add an arrival step for each patient
+    first_step = reshaped_logs2.sort_values(["patient", "minute"], ascending=True) \
+                    .groupby(["patient"]) \
+                    .head(1)
+
+    first_step['minute'] = first_step['minute'] - X_TIME_UNITS
+
+    conditions = [
+        (first_step['pathway'] == "ED"),   
+        (first_step['pathway'] == "SDEC")   
+    ]
+    choices = ['arrival', 'sdec_arrival'] 
+
+    first_step['event'] = np.select(conditions, choices, default='other_arrival')
+
+    reshaped_logs2 = pd.concat([reshaped_logs2, first_step], ignore_index=True)
+
+    # add co-ordinates to the logs
+    position_logs = generate_animation_df(full_patient_df=reshaped_logs2,
+                                                    event_position_df=event_position_df,
+                                                    wrap_queues_at=WRAP_QUEUES_AT,
+                                                    step_snapshot_max=STEP_SNAPSHOT_MAX,
+                                                    gap_between_entities=10, # need this and resource gap to be consistent
+                                                    gap_between_resources=10, # if changing this, also need to specify in generate_animation 
+                                                    gap_between_rows=30, # if changing this, also need to specify in generate_animation  
+                                                    debug_mode=True
+                                                    )
+
+    position_logs['x_final'] = np.where((position_logs['event'] == "exit") & (position_logs['event_type'] == "queue"), 150, position_logs['x_final'])
+    position_logs['y_final'] = np.where((position_logs['event'] == "exit") & (position_logs['event_type'] == "queue"), 0, position_logs['y_final'])
+    position_logs['y_final'] = np.where((position_logs['event'] == "exit") & (position_logs['event_type'] == "resource_use"), 450, position_logs['y_final'])
+    position_logs['x_final'] = np.where((position_logs['event'] == "exit") & (position_logs['event_type'] == "resource_use"), 650, position_logs['x_final'])
+
+    filtered_position_logs = position_logs[(position_logs['minute'] >= 0) & (position_logs['minute'] < 10080)] # run for 1 week after warmup
+
+    # Assign different icons for SDEC and other
+    def show_priority_icon(row):
+            if "more" not in row["icon"]:
+                    if row["pathway"] == "SDEC":
+                            return "🔴"
+                    elif row["pathway"] == "Other":
+                            return "🟣"
+                    else:
+                            return row["icon"]
+            else:
+                        return row["icon"]
+                
+    filtered_position_logs2 = filtered_position_logs.assign(
+                icon=filtered_position_logs.apply(show_priority_icon, axis=1)
+                )
+    
+
+    #today_date = dt.date.today() - pd.DateOffset(days=165)
+    #formatted_date = today_date.strftime("%Y-%m-%d")
+    animation = generate_animation(
+        full_patient_df_plus_pos=filtered_position_logs2.sort_values(['patient', 'minute']),
+        event_position_df= event_position_df,
+        scenario=g(),
+        debug_mode=False,
+        setup_mode=False, # turns on and off gridlines
+        include_play_button=True,
+        icon_and_text_size= 16,
+        plotly_height=800,
+        frame_duration=600,
+        frame_transition_duration=600,
+        plotly_width=1500,
+        override_x_max=600,
+        override_y_max=900,
+        time_display_units="dhm",
+        start_date="2025-01-01",
+        display_stage_labels=False,
+        custom_resource_icon='⚬',
+        add_background_image="https://raw.githubusercontent.com/Countess-of-Chester-Hospital-NHS-FT/Non-Elective-Flow-Simulation/refs/heads/main/app/img/sq8.png"
+    )
+
+    stop_time = time.time()
+    print(f'animation function stopped {time.strftime("%H:%M:%S", time.gmtime(stop_time))}')
+    timer=stop_time-start_time
+    print(f'Animation timer: {time.strftime("%H:%M:%S", time.gmtime(timer))}')
+
+    return animation#, filtered_position_logs, position_logs, reshaped_logs2, reshaped_logs # hashed out for debugging
+
+# For debugging
+#all_event_logs, patient_df, patient_df_nowarmup, run_summary_df, trial_summary_df = Trial().run_trial()
+#animation, filtered_position_logs, position_logs, reshaped_logs2, reshaped_logs = animate(all_event_logs)
+#display(all_event_logs)
+#display(filtered_position_logs)
+# display(position_logs)
+# display(reshaped_logs2)
+#display(reshaped_logs)
+# display(animation)
+            `,
+"home_page.py": `
+import streamlit as st
+
+st.set_page_config(
+     layout="wide"
+ )
+
+st.title("Non-Elective Flow Virtual Hospital")
+st.header("(v0.0.0)")
+
+st.markdown("""
+Welcome to the Non-Elective Flow Virtual Hospital. The Virtual Hospital is being
+developed by the Data & Analytics (D&A) team at the Countess of Chester Hospital. 
+The Virtual Hospital is intended to help understand the effect of different 
+management strategies on ED admission delays (DTA waits) using a computer 
+simulation. Please note the limitations below and that this work is at an early stage. Please contact the D&A
+team with any questions or feedback, or raise an issue via GitHub.
+""")
+
+st.markdown("""
+            
+##### Example questions the Virtual Hospital can help with:
+            
+The Virtual Hospital can help with questions related to the flow and pathway of 
+**admitted**, **non-elective**, **adult** patients. This can help provide evidence for particular management strategies.
+
+Given a starting scenario where x daily 12hr breaches are occurring, what happens to breach numbers:
+* If we open x beds but keep admitted length of stay and demand the same?
+* If we open x beds and reduce inpatient length of stay?
+* If daily demand increases by x and beds and inpatient length of stay remain constant
+
+""")
+
+st.markdown("""
+##### How does the Virtual Hospital work?
+
+Patients flow through the system as illustrated in the diagram below. 
+
+*  Patients
+enter the system when it is decided that they require admission (Decision To Admit).
+This can be via the Emergency Department (ED), the Same Day Emergency
+Care Department (SDEC) or via another route. Admission demand can be altered for each
+of the 3 routes.
+* Patients wait in ED, SDEC or other until there is a bed available. 
+The <span style='color:#FF1493; font-weight:bold'> pink arrow </span>
+represents the queue we are most interested in - these are the patients 
+waiting in ED who are admitted.
+* The longer a patient is waiting in ED, the more likely they are to be discharged from ED rather than admitted
+(reneging).
+* When admitted to a bed a patient remains in that bed and the bed is unavailable
+until they are discharged.
+* The timepoints associated with each simulated patient (Decision To Admit,
+Admission, Discharge) are logged and used to calculate waiting time metrics.
+            
+For more detail on how the model works see the 'More Information' page
+""", unsafe_allow_html=True)
+
+st.image("https://raw.githubusercontent.com/Countess-of-Chester-Hospital-NHS-FT/Non-Elective-Flow-Simulation/refs/heads/main/app/img/model_diagram.png")
+
+st.markdown("""
+##### How is the Virtual Hospital different to a real hospital?
+            
+*"All models are wrong, some are useful" George Box*
+
+The Virtual Hospital is a very simplified version of a real hospital, although some more
+complexity may be built in in the future. It differs
+from a real hospital in the following important ways. In the Virtual Hospital:
+
+* Beds are the only constraint 
+* There is no daily or weekly trend in when patients arrive.
+* ED, SDEC and other routes are assumed to be open at all times.
+* Patients can be discharged at any time of day/week.
+* Any patient can occupy any bed.
+* Beds are ready instantly for the next patient.
+* The overall number of beds stays constant through the simulation.
+            
+This means that flow in the Virtual Hospital will always be **better** than flow in
+the real system (queue times in ED will be worse in the real system than in the 
+Virtual Hospital with the same inputs). 
+
+However, the Virtual Hospital can therefore be used to provide a
+best case scenario - if x beds, x demand and x los leads to 10 DTA breaches per day in the Virtual Hospital,
+you would expect **at least** this many DTA breaches per day in the  real system with the
+same parameters. It can also
+be used to help understand the relationships between beds, demand and los and provide evidence about the 
+required bedbase in the absence of other constraints.
+            
+For more detail on model assumptions see the 'More Information' page
+""", unsafe_allow_html=True)
+
+
+            `,
+"model.py": `
+
+import simpy
+import pandas as pd
+import numpy as np
+from sim_tools.distributions import (Exponential, Lognormal, Uniform)
+from scipy.stats import sem, t
+import scipy.stats as stats
+from vidigi.utils import VidigiPriorityStore, populate_store
+import plotly.express as px
+
+class g: # global
+    ed_inter_visit = 37.7 
+    sdec_inter_visit = 128.8 
+    other_inter_visit = 375.7 
+    number_of_nelbeds = 434 
+    mean_time_in_bed = 13500 
+    sd_time_in_bed = 24297
+    sim_duration = 86400 
+    warm_up_period = (300 * 24 * 60) #convert days into minutes
+    number_of_runs = 10
+    reneging = 1 #allow reneging behaviour to be switched on or off
+    escalation = 1
+    escalation_threshold = (40 * 60) #44 hours
+    prioritisation = 0
+    prop_high_priority = 0.2
+
+class Patient:
+    def __init__(self, p_id):
+        self.id = p_id
+        self.department = ""
+        self.priority = 0
+        self.inpatient_los = 0
+        self.first_request_time = 0
+        self.second_request_time = 0
+
+class Model:
+    def __init__(self, run_number):
+        self.env = simpy.Environment()
+        self.event_log = []
+        self.patient_counter = 0
+        self.run_number = run_number
+
+        # Initialise distributions for generators
+        self.ed_inter_visit_dist = Exponential(mean = g.ed_inter_visit, random_seed = (self.run_number+3)*2)
+        self.sdec_inter_visit_dist = Exponential(mean = g.sdec_inter_visit, random_seed = (self.run_number+3)*3)
+        self.other_inter_visit_dist = Exponential(mean = g.other_inter_visit, random_seed = (self.run_number+3)*4)
+        self.exp_time_in_bed_dist = Lognormal((824.2310988815528 * 60), (1747.3512592813645 * 60), random_seed = (self.run_number+3)*5) # governs reneging behaviour - fixed (values 2023-march 2025)
+        self.mean_time_in_bed_dist = Lognormal(g.mean_time_in_bed, g.sd_time_in_bed, random_seed = (self.run_number+3)*5) # alterable via the interface
+        self.priority_dist = Uniform(0, 1, (self.run_number+3)*6)
+        self.init_resources()
+
+    def init_resources(self):
+        self.nelbed = VidigiPriorityStore(self.env)
+        populate_store(num_resources=g.number_of_nelbeds,
+                       simpy_store=self.nelbed,
+                       sim_env=self.env)
+    
+    def generator_ed_arrivals(self): #ed patients
+        while True:
+            self.patient_counter += 1
+            p = Patient(self.patient_counter)
+            p.department = "ED"
+            self.priority_sample = self.priority_dist.sample()
+            p.priority = 0 if (g.prioritisation == 1 and self.priority_sample < g.prop_high_priority) else 1
+            p.inpatient_los = self.mean_time_in_bed_dist.sample()
+            p.inpatient_exp_los = self.exp_time_in_bed_dist.sample()
+            self.env.process(self.attend_ed(p))
+
+            sampled_inter = self.ed_inter_visit_dist.sample() # time to next patient arriving
+            yield self.env.timeout(sampled_inter)
+    
+    def generator_sdec_arrivals(self):
+        while True:
+            self.patient_counter += 1
+            p = Patient(self.patient_counter)
+            p.department = "SDEC"
+            p.priority = 0 # set all sdec patients as high priority
+            p.inpatient_los = self.mean_time_in_bed_dist.sample()
+            p.inpatient_exp_los = self.exp_time_in_bed_dist.sample()
+            self.env.process(self.attend_other(p))
+
+            sampled_inter = self.sdec_inter_visit_dist.sample()
+            yield self.env.timeout(sampled_inter)
+
+    def generator_other_arrivals(self):
+        while True:
+            self.patient_counter += 1
+            p = Patient(self.patient_counter)
+            p.department = "Other"
+            p.priority = 0 # set all other patients as high priority
+            p.inpatient_los = self.mean_time_in_bed_dist.sample()
+            p.inpatient_exp_los = self.exp_time_in_bed_dist.sample()
+            self.env.process(self.attend_other(p))
+
+            sampled_inter = self.other_inter_visit_dist.sample()
+            yield self.env.timeout(sampled_inter)
+
+    def attend_ed(self, patient):
+        self.event_log.append(
+            {'patient' : patient.id,
+             'pathway' : patient.department,
+             'event_type' : 'arrival_departure',
+             'event' : 'arrival',
+             'time' : self.env.now}
+        )
+        
+        self.event_log.append(
+            {'patient' : patient.id,
+             'pathway' : patient.department,
+             'event_type' : 'queue',
+             'event' : 'admission_wait_begins',
+             'time' : self.env.now}
+        )
+        patient.first_request_time = self.env.now
+        if g.reneging == 0: #if there is no reneging
+            if g.escalation == 0: #if there is no escalation
+                bed_resource = yield self.nelbed.get(priority=patient.priority)
+
+                self.event_log.append(
+                    {'patient' : patient.id,
+                    'pathway' : patient.department,
+                    'event_type' : 'resource_use',
+                    'event' : 'admission_begins',
+                    'time' : self.env.now,
+                    'resource_id' : bed_resource.id_attribute
+                    }
+                    )
+            
+                sampled_bed_time = patient.inpatient_los
+                yield self.env.timeout(sampled_bed_time)
+
+                self.event_log.append(
+                {'patient' : patient.id,
+                'pathway' : patient.department,
+                'event_type' : 'resource_use_end',
+                'event' : 'admission_complete',
+                'time' : self.env.now,
+                'resource_id' : bed_resource.id_attribute
+                }
+                )
+
+                self.nelbed.put(bed_resource)
+
+                self.event_log.append(
+                {'patient' : patient.id,
+                'pathway' : patient.department,
+                'event_type' : 'arrival_departure',
+                'event' : 'depart',
+                'time' : self.env.now}
+                )
+            else: #if there is no reneging but there is escalation
+                bed_resource = self.nelbed.get(priority=patient.priority)
+
+                # Wait until one of 2 things happens....
+                result_of_queue = (yield bed_resource | # they get a bed
+                                    self.env.timeout(g.escalation_threshold)) # they hit the priority threshold
+                if bed_resource in result_of_queue: # if they get a bed before being reprioritised
+                    self.event_log.append(
+                    {'patient' : patient.id,
+                    'pathway' : patient.department,
+                    'event_type' : 'resource_use',
+                    'event' : 'admission_begins',
+                    'time' : self.env.now,
+                    'resource_id' : result_of_queue[bed_resource].id_attribute
+                    }
+                    )
+                            
+                    sampled_bed_time = patient.inpatient_los
+                    yield self.env.timeout(sampled_bed_time)
+
+                    self.event_log.append(
+                    {'patient' : patient.id,
+                    'pathway' : patient.department,
+                    'event_type' : 'resource_use_end',
+                    'event' : 'admission_complete',
+                    'time' : self.env.now,
+                    'resource_id' : result_of_queue[bed_resource].id_attribute
+                    }
+                    )
+
+                    self.nelbed.put(result_of_queue[bed_resource])
+                else: # if they don't get a bed they are reprioritised
+                    bed_resource.cancel() # cancel initial request
+                    patient.priority=0 # reprioritise patient
+                    bed_resource = yield self.nelbed.get(priority=patient.priority) # make new request and follow normal pathway
+
+                    self.event_log.append(
+                        {'patient' : patient.id,
+                        'pathway' : patient.department,
+                        'event_type' : 'resource_use',
+                        'event' : 'admission_begins',
+                        'time' : self.env.now,
+                        'resource_id' : bed_resource.id_attribute
+                        }
+                        )
+                
+                    sampled_bed_time = patient.inpatient_los
+                    yield self.env.timeout(sampled_bed_time)
+
+                    self.event_log.append(
+                    {'patient' : patient.id,
+                    'pathway' : patient.department,
+                    'event_type' : 'resource_use_end',
+                    'event' : 'admission_complete',
+                    'time' : self.env.now,
+                    'resource_id' : bed_resource.id_attribute
+                    }
+                    )
+
+                    self.nelbed.put(bed_resource)
+
+                self.event_log.append(
+                {'patient' : patient.id,
+                'pathway' : patient.department,
+                'event_type' : 'arrival_departure',
+                'event' : 'depart',
+                'time' : self.env.now}
+                )
+
+
+
+        else: # if reneging is turned on
+            if g.escalation == 0: # and escalation is not turned on
+                bed_resource = self.nelbed.get(priority=patient.priority)
+
+                # Wait until one of 2 things happens....
+                result_of_queue = (yield bed_resource | # they get a bed
+                                    self.env.timeout(patient.inpatient_exp_los)) # they renege
+
+                if bed_resource in result_of_queue:
+                    self.event_log.append(
+                    {'patient' : patient.id,
+                    'pathway' : patient.department,
+                    'event_type' : 'resource_use',
+                    'event' : 'admission_begins',
+                    'time' : self.env.now,
+                    'resource_id' : result_of_queue[bed_resource].id_attribute
+                    }
+                    )
+                            
+                    sampled_bed_time = patient.inpatient_los
+                    yield self.env.timeout(sampled_bed_time)
+
+                    self.event_log.append(
+                    {'patient' : patient.id,
+                    'pathway' : patient.department,
+                    'event_type' : 'resource_use_end',
+                    'event' : 'admission_complete',
+                    'time' : self.env.now,
+                    'resource_id' : result_of_queue[bed_resource].id_attribute
+                    }
+                    )
+
+                    self.nelbed.put(result_of_queue[bed_resource])
+                
+                # # If patient reneges
+                else:
+                    bed_resource.cancel() # SR - Think we need to ensure original request is cancelled at this point
+                    self.event_log.append(
+                        {'patient' : patient.id,
+                        'pathway' : patient.department,
+                        'event_type' : 'arrival_departure',
+                        'event' : 'renege',
+                        'time' : self.env.now,
+                        }
+                        )
+                    
+                self.event_log.append(
+                    {'patient' : patient.id,
+                    'pathway' : patient.department,
+                    'event_type' : 'arrival_departure',
+                    'event' : 'depart',
+                    'time' : self.env.now}
+                    )
+            else: # if escalation is turned on and reneging is turned on
+                bed_resource = self.nelbed.get(priority=patient.priority)
+
+                # Wait until one of 3 things happens....
+                result_of_queue = (yield bed_resource | # they get a bed
+                                    self.env.timeout(patient.inpatient_exp_los) |
+                                    self.env.timeout(g.escalation_threshold)) # they renege
+
+                if bed_resource in result_of_queue: # they get a bed initially
+                    self.event_log.append(
+                    {'patient' : patient.id,
+                    'pathway' : patient.department,
+                    'event_type' : 'resource_use',
+                    'event' : 'admission_begins',
+                    'time' : self.env.now,
+                    'resource_id' : result_of_queue[bed_resource].id_attribute
+                    }
+                    )
+                            
+                    sampled_bed_time = patient.inpatient_los
+                    yield self.env.timeout(sampled_bed_time)
+
+                    self.event_log.append(
+                    {'patient' : patient.id,
+                    'pathway' : patient.department,
+                    'event_type' : 'resource_use_end',
+                    'event' : 'admission_complete',
+                    'time' : self.env.now,
+                    'resource_id' : result_of_queue[bed_resource].id_attribute
+                    }
+                    )
+
+                    self.nelbed.put(result_of_queue[bed_resource])
+                
+                # # If patient reneges
+                elif patient.inpatient_exp_los < g.escalation_threshold : # they renege
+                    bed_resource.cancel() # cancel initial request
+                    self.event_log.append(
+                        {'patient' : patient.id,
+                        'pathway' : patient.department,
+                        'event_type' : 'arrival_departure',
+                        'event' : 'renege',
+                        'time' : self.env.now,
+                        }
+                        )
+                    
+                else: # they are reprioritised and wait for a bed
+                    bed_resource.cancel() # cancel initial request
+                    patient.priority=0 # reprioritise patient
+                    patient.second_request_time = self.env.now
+                    bed_resource = self.nelbed.get(priority=patient.priority)
+
+                # Wait until one of 2 things happens....
+                    result_of_queue = (yield bed_resource | # they get a bed
+                                        self.env.timeout(patient.inpatient_exp_los - (patient.second_request_time - patient.first_request_time))) # they renege
+
+                    if bed_resource in result_of_queue:
+                        self.event_log.append(
+                        {'patient' : patient.id,
+                        'pathway' : patient.department,
+                        'event_type' : 'resource_use',
+                        'event' : 'admission_begins',
+                        'time' : self.env.now,
+                        'resource_id' : result_of_queue[bed_resource].id_attribute
+                        }
+                        )
+                                
+                        sampled_bed_time = patient.inpatient_los
+                        yield self.env.timeout(sampled_bed_time)
+
+                        self.event_log.append(
+                        {'patient' : patient.id,
+                        'pathway' : patient.department,
+                        'event_type' : 'resource_use_end',
+                        'event' : 'admission_complete',
+                        'time' : self.env.now,
+                        'resource_id' : result_of_queue[bed_resource].id_attribute
+                        }
+                        )
+
+                        self.nelbed.put(result_of_queue[bed_resource])
+                    
+                    # # If patient reneges
+                    else:
+                        bed_resource.cancel() # SR - Think we need to ensure original request is cancelled at this point
+                        self.event_log.append(
+                            {'patient' : patient.id,
+                            'pathway' : patient.department,
+                            'event_type' : 'arrival_departure',
+                            'event' : 'renege',
+                            'time' : self.env.now,
+                            }
+                            )
+                        
+                self.event_log.append(
+                    {'patient' : patient.id,
+                    'pathway' : patient.department,
+                    'event_type' : 'arrival_departure',
+                    'event' : 'depart',
+                    'time' : self.env.now}
+                    )
+
+    
+    def attend_other(self, patient):
+        self.event_log.append(
+            {'patient' : patient.id,
+             'pathway' : patient.department,
+             'event_type' : 'arrival_departure',
+             'event' : 'arrival',
+             'time' : self.env.now}
+        )
+
+        self.event_log.append(
+            {'patient' : patient.id,
+             'pathway' : patient.department,
+             'event_type' : 'queue',
+             'event' : 'admission_wait_begins',
+             'time' : self.env.now}
+        )
+
+        #self.env.timeout(1)
+
+        bed_resource = yield self.nelbed.get(priority=patient.priority)
+
+        self.event_log.append(
+            {'patient' : patient.id,
+            'pathway' : patient.department,
+            'event_type' : 'resource_use',
+            'event' : 'admission_begins',
+            'time' : self.env.now,
+            'resource_id' : bed_resource.id_attribute
+            }
+            )
+        
+        sampled_bed_time = patient.inpatient_los
+        yield self.env.timeout(sampled_bed_time)
+
+        self.event_log.append(
+        {'patient' : patient.id,
+        'pathway' : patient.department,
+        'event_type' : 'resource_use_end',
+        'event' : 'admission_complete',
+        'time' : self.env.now,
+        'resource_id' : bed_resource.id_attribute
+        }
+        )
+
+        self.nelbed.put(bed_resource)
+
+        self.event_log.append(
+        {'patient' : patient.id,
+        'pathway' : patient.department,
+        'event_type' : 'arrival_departure',
+        'event' : 'depart',
+        'time' : self.env.now}
+        )
+
+    def run(self):
+        self.env.process(self.generator_ed_arrivals())
+        if g.sdec_inter_visit !=0:
+            self.env.process(self.generator_sdec_arrivals())
+        if g.other_inter_visit !=0:
+            self.env.process(self.generator_other_arrivals())
+        self.env.run(until=(g.sim_duration + g.warm_up_period))
+        self.event_log = pd.DataFrame(self.event_log)
+        self.event_log["run"] = self.run_number
+        return {'event_log':self.event_log}
+
+class Trial:
+    def  __init__(self):
+        self.all_event_logs = []
+        self.patient_df = pd.DataFrame()
+        self.patient_df_nowarmup = pd.DataFrame()
+        self.run_summary_df = pd.DataFrame()
+        self.trial_summary_df = pd.DataFrame()
+
+    def run_trial(self):
+        for run in range(g.number_of_runs):
+            my_model = Model(run)
+            model_outputs = my_model.run()
+            event_log = model_outputs["event_log"]
+            
+            self.all_event_logs.append(event_log)
+        self.all_event_logs = pd.concat(self.all_event_logs)
+        self.wrangle_data()
+        self.summarise_runs()
+        self.summarise_trial()
+        return self.all_event_logs, self.patient_df, self.run_summary_df, self.trial_summary_df
+    
+    def wrangle_data(self):
+        df = self.all_event_logs[["patient", "event", "time", "run", "pathway"]]
+        df = df.pivot(index=["patient","run", "pathway"], columns="event", values="time")
+        df = (df.reset_index()
+                .rename_axis(None,axis=1))
+        #df["total_los"] = df["depart"] - df["arrival"]
+        if "renege" not in df.columns:
+            df["renege"] = np.nan
+        df["q_time"] = df["admission_begins"] - df["admission_wait_begins"]
+        df["q_time_hrs"] = df["q_time"] / 60.0
+        # df["q_time2_hrs"] = np.where(
+        #                         df["admission_begins"].notnull(),
+        #                         df["admission_begins"] - df["admission_wait_begins"],
+        #                         df["renege"] - df["admission_wait_begins"]
+        #                         ) / 60.0
+        df["q_time2_hrs"] = np.select(
+                                [df["admission_begins"].notnull(),df["renege"].notnull()],
+                                [df["admission_begins"] - df["admission_wait_begins"],
+                                         df["renege"] - df["admission_wait_begins"]],
+                                (g.warm_up_period+g.sim_duration) - df["admission_wait_begins"]
+                                ) / 60.0
+        df["treatment_time"] = df["admission_complete"] - df["admission_begins"]
+        self.patient_df = df
+        #self.patient_df_nowarmup = df[df["arrival"] > g.warm_up_period]
+        #self.patient_df_nowarmup = df[(df["arrival"] > g.warm_up_period) 
+        #                  | (df["admission_begins"] > g.warm_up_period)
+        #                  | (df["renege"] > g.warm_up_period)]
+        # columns_to_check = [
+        # 'admission_begins', 'admission_complete', 'admission_wait_begins',
+        # 'arrival', 'depart', 'treatment_time', 'renege'
+        # ]
+        # self.patient_df_nowarmup = df[df[columns_to_check].gt(g.warm_up_period).any(axis=1)]
+
+    def summarise_runs(self):
+        run_summary = self.patient_df
+        # note that q_time is na where a patient is not admitted so is automatically omitted from summary calcs
+        run_summary = run_summary.groupby("run").agg(
+            total_demand=("arrival", lambda x: (x > g.warm_up_period).sum()),
+            discharges=("patient", lambda x: (
+                        ((run_summary.loc[x.index, "admission_complete"] > g.warm_up_period))
+                        .sum())),
+            
+            #("admission_complete", lambda x: (x > g.warm_up_period).sum()),
+            ed_demand=("patient", lambda x: (
+                        ((run_summary.loc[x.index, "arrival"] > g.warm_up_period
+                        ) & (run_summary.loc[x.index, "pathway"] == "ED")).sum())),
+            ed_admissions=("patient", lambda x: (
+                        ((run_summary.loc[x.index, "admission_begins"] > g.warm_up_period
+                        ) & (run_summary.loc[x.index, "pathway"] == "ED")).sum())),
+            reneged=("renege", lambda x: (x > g.warm_up_period).sum() / (g.sim_duration/1440)),
+            ed_mean_qtime=("q_time", lambda x: (
+                        x[
+                            (run_summary.loc[x.index, "admission_begins"] > g.warm_up_period) &
+                            (run_summary.loc[x.index, "pathway"] == "ED") &
+                            x.notna()
+                        ].mean() / 60.0
+            )),
+            ed_sd_qtime=("q_time", lambda x: (
+                        x[
+                            (run_summary.loc[x.index, "admission_begins"] > g.warm_up_period) &
+                            (run_summary.loc[x.index, "pathway"] == "ED") &
+                            x.notna()
+                        ].std() / 60.0
+            )),
+            ed_min_qtime=("q_time", lambda x: (
+                        x[
+                            (run_summary.loc[x.index, "admission_begins"] > g.warm_up_period) &
+                            (run_summary.loc[x.index, "pathway"] == "ED") &
+                            x.notna()
+                        ].min() / 60.0
+            )),
+            ed_max_qtime=("q_time", lambda x: (
+                        x[
+                            (run_summary.loc[x.index, "admission_begins"] > g.warm_up_period) &
+                            (run_summary.loc[x.index, "pathway"] == "ED") &
+                            x.notna()
+                        ].max() / 60.0
+            )),
+            ed_95=("q_time", lambda x: (
+                np.percentile(
+                    x[
+                        (run_summary.loc[x.index, "admission_begins"] > g.warm_up_period) &
+                        (run_summary.loc[x.index, "pathway"] == "ED") &
+                        x.notna()
+                    ],
+                    95
+                ) / 60.0
+            )),
+            dtas_12hr=("q_time", lambda x: (
+                        x[
+                            (run_summary.loc[x.index, "admission_begins"] > g.warm_up_period) &
+                            (run_summary.loc[x.index, "pathway"] == "ED") &
+                            x.notna()
+                        ].gt(12 * 60).sum() / (g.sim_duration/1440)
+            )),
+            los_12hr=("q_time2_hrs", lambda x: (
+                        x[  (
+                            (run_summary.loc[x.index, "admission_wait_begins"] > g.warm_up_period)
+                            ) &
+                            (run_summary.loc[x.index, "pathway"] == "ED") &
+                            x.notna()
+                        ].gt(12).sum() / (g.sim_duration/1440)
+            )),
+            los_24hr=("q_time2_hrs", lambda x: (
+                        x[  (
+                            (run_summary.loc[x.index, "admission_wait_begins"] > g.warm_up_period)
+                            ) &
+                            (run_summary.loc[x.index, "pathway"] == "ED") &
+                            x.notna()
+                        ].gt(24).sum() / (g.sim_duration/1440)
+            )),
+            los_48hr=("q_time2_hrs", lambda x: (
+                        x[  (
+                            (run_summary.loc[x.index, "admission_wait_begins"] > g.warm_up_period)
+                            ) &
+                            (run_summary.loc[x.index, "pathway"] == "ED") &
+                            x.notna()
+                        ].gt(48).sum() / (g.sim_duration/1440)
+            )),
+            los_72hr=("q_time2_hrs", lambda x: (
+                        x[  (
+                            (run_summary.loc[x.index, "admission_wait_begins"] > g.warm_up_period)
+                            ) &
+                            (run_summary.loc[x.index, "pathway"] == "ED") &
+                            x.notna()
+                        ].gt(72).sum() / (g.sim_duration/1440)
+            )),
+            sdec_admissions=("patient", lambda x: (
+                        ((run_summary.loc[x.index, "admission_begins"] > g.warm_up_period
+                        ) & (run_summary.loc[x.index, "pathway"] == "SDEC")).sum()))
+        )
+        run_summary=run_summary.drop(columns=["ed_demand", "ed_sd_qtime"])
+        run_summary=run_summary.rename(columns={
+            'total_demand':'Total Admission Demand',
+            'discharges':'Total Discharges',
+            'ed_admissions': 'Admissions via ED',
+            'reneged': 'Reneged (per day)',
+            'ed_mean_qtime':'Mean Q Time (Hrs)',
+            'ed_min_qtime':'Min Q Time (Hrs)',
+            'ed_max_qtime':'Max Q Time (Hrs)',
+            'ed_95':'95th Percentile Q Time (Hrs)',
+            'dtas_12hr':'12hr DTAs (per day)',
+            'los_12hr':'12hr LoS Breaches (per day)',
+            'los_24hr':'24hr LoS Breaches (per day)',
+            'los_48hr':'48hr LoS Breaches (per day)',
+            'los_72hr':'72hr LoS Breaches (per day)',
+            'sdec_admissions':'SDEC Admissions'
+        })
+        self.run_summary_df = run_summary
+
+    def summarise_trial(self):
+        trial_summary = self.run_summary_df
+        trial_summary = trial_summary.transpose()
+        newdf = pd.DataFrame(index=trial_summary.index)
+        newdf.index.name = "Metric"
+        newdf["Mean"] = trial_summary.mean(axis=1)
+        newdf["St. dev"] = trial_summary.std(axis=1)
+        newdf['St. error'] = sem(trial_summary, axis=1, nan_policy='omit')
+        # Confidence intervals (95%) - t distribution method accounts for sample size
+        confidence = 0.95
+        h = newdf['St. error'] * t.ppf((1 + confidence) / 2, g.number_of_runs - 1)
+        newdf['Lower 95% CI'] = newdf['Mean'] - h
+        newdf['Upper 95% CI'] = newdf['Mean'] + h
+        newdf['Min'] = trial_summary.min(axis=1)
+        newdf['Max'] = trial_summary.max(axis=1)
+        newdf=newdf.round(2)
+        self.trial_summary_df = newdf
+    
+
+#For testing
+# my_trial = Trial()
+# print(f"Running {g.number_of_runs} simulations......")
+# all_event_logs, patient_df, run_summary_df, trial_summary_df =  my_trial.run_trial()
+# # # # # #display(my_trial.all_event_logs.head(1000))
+# display(my_trial.patient_df.tail(1000))
+# # # # # #display(my_trial.patient_df_nowarmup.head(1000))
+# display(my_trial.trial_summary_df)
+
+# # # # # test for no admission complete and no renege without depart timestamps
+# # # display(patient_df[(~patient_df['admission_complete'].isna()) & (patient_df['depart'].isna())])
+# # # display(patient_df[(~patient_df['admission_complete'].isna()) & (patient_df['depart'].isna())])
+        
+# # #####Number of beds occupied
+
+# minutes = pd.Series(range(g.sim_duration - 1440, g.sim_duration))
+
+# run0_df = patient_df[patient_df['run'] == 0]
+# beds = ((run0_df["admission_begins"].values[:, None] < minutes.values) &
+#         ((run0_df["admission_complete"].values[:, None] > minutes.values) |
+#          run0_df["admission_complete"].isna().values[:, None])).sum(axis=0)
+
+# beds_df = pd.DataFrame({"minutes": minutes, "beds": beds})
+
+# fig = px.line(beds_df, x = "minutes", y = "beds")
+
+# fig.add_hline(y=434, line_dash="dash", line_color="lightblue",
+#               opacity=0.5, 
+#               annotation_text="max. beds", 
+#               annotation_position="top left")
+
+# fig.update_layout(template="plotly_dark")
+
+# fig.show()
+            `,
+"more_info_page.py": `
+import streamlit as st
+
+st.set_page_config(
+     layout="wide"
+ )
+
+st.title("More Information")
+
+st.markdown("""
+##### Conceptual model
+
+Long admission delays in ED are often driven by waits for an available bed.
+Reduced to its simplest possible components non-elective flow can be modelled
+as below:
+""")
+
+st.image("https://raw.githubusercontent.com/Countess-of-Chester-Hospital-NHS-FT/Non-Elective-Flow-Simulation/refs/heads/main/app/img/model_diagram.png")
+
+st.markdown("""
+The inputs to the model are the number of patients needing non-elective 
+admission. They can be admitted to a bed via ED, SDEC or directly. They must
+wait in ED until a bed comes available. They remain in that bed for a period of
+time until they are discharged. Some patients, who needed admission will depart
+directly from ED, as they have completed thier whole treatment pathway while
+queuing for a bed.
+            
+In the system described above there are 3 things that affect ED admission delays:
+            
+* Number of beds
+* Number of people requiring admission
+* How long people stay in a bed
+            
+Although the details of management strategies aimed at reducing admission delays
+differ, they will need to have an effect on one or more of these things to
+be effective.
+            
+This tool enables you to try out different scenarios to estimate the maximum effect any
+strategy will have on ED admission delays.
+            
+##### Computer model
+
+The above conceptual model is represented inside the computer as a 'Discrete
+Event Simulation'. The computer generates synthetic patients (just like in a
+video game) and sends them through the system (you can view this in the animation tab). 
+The simulated patients will wait
+in ED until a bed comes available, then they will stay in that bed for a period
+of time and the timepoints when they move from one place to another are recorded
+, just like in the real system. 
+            
+In the real system there is random variation in how frequently patients arrive 
+and how long they stay in a bed and this is mirrored in the real system. Interarrival 
+times and inpatient lengths of stay are randomly selected from a distributions which 
+approxiamte the real distributions.
+The simulation runs for the selected number of 60 day periods, following a 300 day warmup 
+(so the hospital isn't empty at the start of the ditribution).
+It then shows admission delay metrics
+for that period, alongside confidence intervals. The number of runs can be 
+increased by the user to obtain smaller confidence intervals (but the model will
+take longer to run).
+            
+##### Limitations and suggested use
+            
+As described on the homepage, the model system is much simpler than the real
+system and differs in several important ways.
+Therefore this tool is not intended as a forecasting tool, but as a tool for exploring
+strategic scenarios, based on the assumptions codified in the model. 
+
+"""
+)
+            `,
+"sim_page.py": `
+import streamlit as st
+import plotly.express as px
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from animation import animate
+
+from model import g, Trial
+
+st.set_page_config(
+     layout="wide"
+ )
+
+#Initialise session state
+if 'button_click_count' not in st.session_state:
+  st.session_state.button_click_count = 0
+if 'session_results' not in st.session_state:
+    st.session_state['session_results'] = []
+if 'session_inputs' not in st.session_state:
+    st.session_state['session_inputs'] = []
+if 'animation' not in st.session_state:
+    st.session_state['animation'] = []
+
+st.title("Non-Elective Flow Virtual Hospital")
+st.header("(v0.0.0)")
+
+# set range of values for los slider
+mean_time_in_bed_list = [138.7382025354152,
+ 144.1204868652976,
+ 149.76134831621232,
+ 155.67473175398086,
+ 161.8754074290085,
+ 168.3790235999657,
+ 175.20216273322046,
+ 182.36240153482328,
+ 189.87837509120888,
+ 197.7698454156935,
+ 206.05777472038835,
+ 214.76440375750852,
+ 223.91333560032334,
+ 233.5296252623914,
+ 243.63987558436168,
+ 254.27233985074432,
+ 265.45703163483324,
+ 277.2258424086355,
+ 289.61266749646745,
+ 302.6535409960803]
+mean_int_in_bed_list=[round(x) for x in mean_time_in_bed_list]
+sd_time_in_bed_list = [248.9837009930806,
+ 262.9621106480747,
+ 277.822418063578,
+ 293.6256905003274,
+ 310.43755753899,
+ 328.3285748616339,
+ 347.3746187373278,
+ 367.6573139379976,
+ 389.26449806398347,
+ 412.2907255366589,
+ 436.83781482034146,
+ 463.0154427703993,
+ 490.9417903718149,
+ 520.7442445359864,
+ 552.5601610667529,
+ 586.5376943937254,
+ 622.8367002063923,
+ 661.6297177111919,
+ 703.1030388812503,
+ 747.4578727809351]
+off_on = ["off", "on"]
+
+with st.sidebar:
+    daily_ed_adm_slider = st.slider("Adjust daily demand for admission via ED",
+                                    min_value=25, max_value=55, value=38)
+    daily_sdec_adm_slider = st.slider("Adjust daily demand for admission via SDEC",
+                                    min_value=0, max_value=20, value=12)
+    daily_other_adm_slider = st.slider("Adjust daily demand for admission via other routes",
+                                    min_value=0, max_value=10, value=3)
+    num_nelbeds_slider = st.slider("Adjust number of non-elective beds",
+                                min_value=380, max_value=550, value=456)
+    mean_los_slider = st.select_slider("Adjust mean inpatient LOS (hrs)",
+                                options=mean_int_in_bed_list, 
+                                value=mean_int_in_bed_list[10],
+                                help="Values from a pre-calculated set of distributions - see los documentation")
+    
+    with st.expander("Advanced Parameters"):
+        num_runs_slider = st.slider("Adjust number of runs the model does",
+                                     min_value=5, max_value=20, value=15)
+        escalation_slider = st.select_slider("Turn escalation on/off",
+                                             options=off_on,
+                                             value=off_on[1],
+                                             help="Increase priority of patients"
+                                               " after threshold number of hours"
+                                                " (see slider below)")
+        escalation_threshold_slider = st.slider("Adjust threshold for escalation",
+                                                min_value=0,
+                                                max_value=100,
+                                                value=40,
+                                                help="Number of hours wait after"
+                                                " which patients priority increases"
+                                                " (will only have an effect if "
+                                                "escalation is turned on)")
+        renege_slider = st.select_slider("Turn reneging on/off",
+                                             options=off_on,
+                                             value=off_on[1],
+                                             help="When reneging is on patients "
+                                             "can be discharged from ED if "
+                                             "their waiting time crosses a "
+                                             "threshold (which is set randomly "
+                                             "for each person)")
+        prioritisation_slider = st.select_slider("Turn prioritisation on/off",
+                                             options=off_on,
+                                             value=off_on[0],
+                                             help="A proportion of ED patients"
+                                             " enter the model with higher priority"
+                                             "when turned on")
+        prioritisation_prop_slider = st.slider("Adjust proportion of high priority patients",
+                                                min_value=0.0,
+                                                max_value=1.0,
+                                                step=0.1,
+                                                value=0.2,
+                                                help="Proportion of patients entering"
+                                                " ED with high priority for admission"
+                                                " (will only have an effect if "
+                                                "prioritisation is turned on)")
+        
+        
+    st.markdown("---")
+
+    st.markdown("""
+    #### Inputs for the real system:
+    
+    Inputs and outputs for the real system at the Countess of Chester Hospital
+    can be found on the [Non-Elective Flow Dashboard](https://app.powerbi.com/groups/9de122d9-f066-4bcf-aebf-74c9a499bcec/reports/c7d62a4c-145c-4b1b-b477-12782838b53a?ctid=37c354b2-85b0-47f5-b222-07b48d774ee3&pbi_source=linkShare)
+    (Access restricted to internal users.)
+    
+                """)
+# use function make_lognormal_lists from distribution_functions.py, mode=16, len=20
+
+g.mean_time_in_bed = (mean_time_in_bed_list[mean_int_in_bed_list.index(mean_los_slider)] * 60)
+g.sd_time_in_bed = (sd_time_in_bed_list[mean_int_in_bed_list.index(mean_los_slider)] * 60)
+g.number_of_nelbeds = num_nelbeds_slider
+g.ed_inter_visit = 1440/daily_ed_adm_slider
+g.sdec_inter_visit = 1440/daily_sdec_adm_slider if daily_sdec_adm_slider != 0 else 0
+g.other_inter_visit = 1440/daily_other_adm_slider if daily_other_adm_slider != 0 else 0
+g.number_of_runs = num_runs_slider
+g.escalation = (off_on.index(escalation_slider))
+g.escalation_threshold = escalation_threshold_slider * 60
+g.reneging = (off_on.index(renege_slider))
+g.prioritisation = (off_on.index(prioritisation_slider))
+g.prop_high_priority = prioritisation_prop_slider
+
+
+tab1, tab_animate, tab2 = st.tabs(["Run Virtual Hospital", "View Animation", "Compare scenarios"])
+
+
+with tab1:
+
+    button_run_pressed = st.button("Click here to run")
+
+    if button_run_pressed:
+        with st.spinner("Simulating the system"):
+            all_event_logs, patient_df, run_summary_df, trial_summary_df = Trial().run_trial()
+            
+            # Adding to session state objects so we can compare scenarios
+            #st.session_state['event_logs'] = all_event_logs
+            
+            # Comparing inputs
+            st.session_state.button_click_count += 1
+            col_name = f"Scenario {st.session_state.button_click_count}"
+            # make dataframe with inputs, set an index, select as a series
+            inputs_for_state = pd.DataFrame({
+            'Input': ['Mean LoS', 'Number of beds', 'Admissions via ED', 
+                'Admissions via SDEC', 'Admissions via Other', 'Number of runs',
+                'Escalation', 'Escalation threshold', 'Reneging', 'Prioritisation',
+                'Proportion high priority'],
+            col_name: [mean_los_slider, num_nelbeds_slider, daily_ed_adm_slider, 
+                daily_sdec_adm_slider, daily_other_adm_slider, num_runs_slider,
+                escalation_slider, escalation_threshold_slider, renege_slider,
+                prioritisation_slider, prioritisation_prop_slider]
+            }).set_index('Input')[col_name]
+            # Append input series to the session state
+            st.session_state['session_inputs'].append(inputs_for_state)
+            
+            # Comparing results
+            results_for_state = trial_summary_df['Mean']
+            results_for_state.name = col_name
+            st.session_state['session_results'].append(results_for_state)
+        
+            ################
+            st.write(f"You've run {st.session_state.button_click_count} scenarios")
+            st.write(f"These metrics are for 60 day period and are a summary of {g.number_of_runs} runs")
+
+            metrics=['Total Admission Demand', 'Admissions via ED',
+                         'Mean Q Time (Hrs)', '95th Percentile Q Time (Hrs)',
+                         '12hr DTAs (per day)', 'Reneged (per day)',
+                         '12hr LoS Breaches (per day)', '24hr LoS Breaches (per day)',
+                         '48hr LoS Breaches (per day)', '72hr LoS Breaches (per day)']
+            trial_summary_df=trial_summary_df[trial_summary_df.index.isin(metrics)]
+
+            st.dataframe(trial_summary_df)
+            ###################
+            
+            #filter dataset to ED
+            ed_df_nowarmup = patient_df[(patient_df["pathway"] == "ED")
+                                         & (patient_df["admission_begins"] > g.warm_up_period)]
+
+            #Create the histogram
+            if ed_df_nowarmup['q_time_hrs'].mean() > 1 :
+                fig = plt.figure(figsize=(8, 6))
+                sns.histplot(
+                ed_df_nowarmup['q_time_hrs'], 
+                bins=range(int(ed_df_nowarmup['q_time_hrs'].min()), 
+                        int(ed_df_nowarmup['q_time_hrs'].max()) + 1, 1), 
+                kde=False)
+
+                # # Set the boundary for the bins to start at 0
+                plt.xlim(left=0)
+
+                # Add vertical lines with labels
+                lines = [
+                    {"x": trial_summary_df.loc["Mean Q Time (Hrs)", "Mean"], "color": "tomato", "label": f'Mean Q Time: {round(trial_summary_df.loc["Mean Q Time (Hrs)", "Mean"])} hrs'},
+                    #{"x": 4, "color": "mediumturquoise", "label": f'4 Hr DTA Performance: {round(trial_summary_df.loc["Admitted 4hr DTA Performance (%)", "Mean"])}%'},
+                    #{"x": 12, "color": "royalblue", "label": f'12 Hr DTAs per day: {round(trial_summary_df.loc["12hr DTAs (per day)", "Mean"])}'},
+                    {"x": trial_summary_df.loc["95th Percentile Q Time (Hrs)", "Mean"], "color": "goldenrod", "label": f'95th Percentile Q Time: {round(trial_summary_df.loc["95th Percentile Q Time (Hrs)", "Mean"])} hrs'},
+                    #{"x": trial_summary_df.loc["Max Q Time (Hrs)", "Mean"], "color": "slategrey", "label": f'Max Q Time: {round(trial_summary_df.loc["Max Q Time (Hrs)", "Mean"])} hrs'},
+                ]
+
+                for line in lines:
+                    # Add the vertical line
+                    plt.axvline(x=line["x"], color=line["color"], linestyle='--', linewidth=1, zorder=0)
+                    
+                    # Add label with text
+                    plt.text(line["x"] + 2, plt.ylim()[1] * 0.95, line["label"], 
+                            color=line["color"], ha='left', va='top', fontsize=10, rotation=90,
+                            bbox=dict(facecolor='white', edgecolor='none', alpha=0.3, boxstyle='round,pad=0.5'))
+
+                # Add transparent rectangles for confidence intervals
+                ci_ranges = [
+                    {"lower": trial_summary_df.loc["Mean Q Time (Hrs)", "Lower 95% CI"], 
+                    "upper": trial_summary_df.loc["Mean Q Time (Hrs)", "Upper 95% CI"], "color": "tomato"},
+                    {"lower": trial_summary_df.loc["95th Percentile Q Time (Hrs)", "Lower 95% CI"], 
+                    "upper": trial_summary_df.loc["95th Percentile Q Time (Hrs)", "Upper 95% CI"], "color": "goldenrod"},
+                    #{"lower": trial_summary_df.loc["Max Q Time (Hrs)", "Lower 95% CI"], 
+                    #"upper": trial_summary_df.loc["Max Q Time (Hrs)", "Upper 95% CI"], "color": "slategrey"},
+                ]
+
+                for ci in ci_ranges:
+
+                    plt.axvspan(
+                        ci["lower"],
+                        ci["upper"],
+                        color=ci["color"],
+                        alpha=0.2,
+                        zorder=0)
+
+                # Add labels and title if necessary
+                plt.xlabel('Admission Delays (Hours)')
+                plt.title('Histogram of Admission Delays (All Runs)')
+                fig.text(0.8, 0.01, 'Boxes show 95% CI.', ha='center', fontsize=10)
+
+                col1, col2, col3 = st.columns([3, 1, 1])  # Adjust column ratios
+                with col1:  
+                # Display the plot
+                    st.pyplot(fig)
+            else:
+                st.write("Waiting times cannot be plotted on a histogram as there are no significant waits for admission")
+
+            st.write("This is a table of metrics for each individual run")
+            st.dataframe(run_summary_df)
+
+            # run5_df = ed_df_nowarmup[ed_df_nowarmup['run'] == 6]
+
+            # if run5_df['q_time_hrs'].mean() > 1 :
+            #     fig_runhist = px.histogram(run5_df, x='q_time')
+            #     st.plotly_chart(fig_runhist, use_container_width=True)
+            # else:
+            #     st.write("Waiting times cannot be plotted on a histogram as there are no significant waits for admission")
+            # ###################
+
+with tab_animate:
+    with st.spinner("Generating animation"):
+
+        if 'all_event_logs' in globals():
+            animation = animate(all_event_logs)
+
+            st.session_state['animation'] = animation
+
+        if st.session_state['animation']:
+            st.markdown("""
+                        Animation of a single run of the latest scenario.
+
+                        If you are viewing on a small screen minimise the 
+                        sidebar or download the plot.
+                        """)
+            st.plotly_chart(st.session_state['animation'],
+                                    use_container_width=False,
+                                    config = {'displayModeBar': False})
+            
+            st.download_button(
+                    label="Download Plot as HTML",
+                    data=st.session_state['animation'].to_html(full_html=False, include_plotlyjs="cdn"),
+                    file_name="plot.html",
+                    mime="text/html"
+                )
+            #st.dataframe(reshaped_logs)
+        
+with tab2:
+    st.write(f"You've run {st.session_state.button_click_count} scenarios")
+
+    # Convert series back to df, transpose, display
+    if st.session_state.button_click_count > 0:
+        st.write("Here are your inputs for each scenario")
+        current_i_df = pd.DataFrame(st.session_state['session_inputs']).T
+        st.dataframe(current_i_df)
+        
+        st.write("Here are your results for each scenario")
+        current_state_df = pd.DataFrame(st.session_state['session_results']).T
+        st.dataframe(current_state_df)
+
+        plot_df = pd.DataFrame(st.session_state['session_results'])
+
+        #st.write("Available columns:", current_state_df.index.tolist())
+        #st.write(current_state_df.index)
+
+        # Create bar chart for 12hr LOS breaches
+        fig = px.bar(
+            plot_df,
+            x=plot_df.index,
+            y="12hr LoS Breaches (per day)",
+            title='12hr Length of Stay Breaches per Day by Scenario'
+        )
+        fig.update_layout(
+            xaxis_title="Scenario",
+            yaxis_title="12 hr LoS Breaches per Day"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+            `,
+"img/model_diagram.jpg": {
+url: "https://raw.githubusercontent.com/bergam0t/hr_non-elective-flow-simulation/refs/heads/main/img/model_diagram.jpg"
+},
+"img/model_diagram.png": {
+url: "https://raw.githubusercontent.com/bergam0t/hr_non-elective-flow-simulation/refs/heads/main/img/model_diagram.png"
+},
+"sq8.png": {
+url: "https://raw.githubusercontent.com/bergam0t/hr_non-elective-flow-simulation/refs/heads/main/sq8.png"
+}
+          },
+        },
+        document.getElementById("root")
+      );
+    </script>
+  </body>
+</html>
