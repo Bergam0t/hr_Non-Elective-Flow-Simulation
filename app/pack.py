@@ -30,14 +30,10 @@ pack(
         "home_page.py",
         "model.py",
         "more_info_page.py",
-        "sim_page.py"
-        ],
-    # There are a few non-text files we're like to make sure we have access to
-    extra_files_to_link=[
-        "img/model_diagram.jpg",
-        "img/model_diagram.png",
-        "sq8.png"
+        "sim_page.py",
     ],
+    # There are a few non-text files we're like to make sure we have access to
+    extra_files_to_link=["img/model_diagram.jpg", "img/model_diagram.png", "sq8.png"],
     # The hosted files are stored in a particular repository - we pass this in in the format
     # username/repository_path
     prepend_github_path="bergam0t/hr_non-elective-flow-simulation",
@@ -56,8 +52,8 @@ pack(
     # work around this by changing any dataframes to tables instead
     replace_df_with_table=False,
     # Finally, we'll request to run a preview server so we can display the created app
-    run_preview_server=True
-    )
+    run_preview_server=True,
+)
 
 # !! Note that because of the preview server being opened up,
 # the next bit won't run until we close our preview server with CTRL + C !!
@@ -68,12 +64,12 @@ setup_github_pages(
     mode="gh-actions",
     # We are in the app subfolder, so we need to move up a level to the repository root
     # before we create the .github folder where our deployment workflow will sit
-    output_dir="..",
+    root_dir="..",
     # We didn't put our output in the docs folder when packing as there was already a different set
     # of documentation files in there - so we specify use_docs = False so that the created workflow
     # file knows to look at the root of the repository
     use_docs=False,
     # Finally, we want the .nojekyll files to be created automatically to ensure no post-processing
     # of our index.html file happens when it's uploaded to github pages
-    create_nojekyll=True
-    )
+    create_nojekyll=True,
+)
