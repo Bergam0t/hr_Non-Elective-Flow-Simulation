@@ -6,6 +6,7 @@ To complete setup:
   - Source: **Github Actions**
 3. **NOW** commit the following files:
   - the deploy.yml file that has been created in .github/workflows
-  - the `index.html` and `.nojekyll` files that have been created in the root of your repository
+  - the `index.html` that was created in the specified folder in your repository
+  - the `404.html` and `.nojekyll` files that have been created in the root of your repository
 4. Visit your deployed app at https://your-github-username.github.io/your-repo-name/
   - note that it may take a few minutes for the app to finish deploying

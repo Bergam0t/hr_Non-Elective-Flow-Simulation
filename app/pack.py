@@ -56,7 +56,7 @@ pack(
 )
 
 # !! Note that because of the preview server being opened up,
-# the next bit won't run until we close our preview server with CTRL + C !!
+# !! the next bit won't run until we close our preview server with CTRL + C !!
 
 # We also want to create a workflow file to aid in deployment
 setup_github_pages(

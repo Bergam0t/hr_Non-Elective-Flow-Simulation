@@ -7,21 +7,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Redirecting…</title>
   <script>
-    // Determine the root URL
-    const pathSegments = location.pathname.split('/').filter(Boolean);
+    // Remove everything after the first segment of the app
+    // Assumes your app is contained in a single "folder" level in the URL
+    const segments = location.pathname.split('/').filter(Boolean);
 
-    // For user/org site, root is "/"
-    // For project site, root is "/repo-name/"
-    const repoRoot = pathSegments.length > 0 && pathSegments[0] !== location.hostname
-      ? `/${pathSegments[0]}/`
-      : '/';
+    // Go to the first segment if it exists, otherwise root
+    const redirectTo = segments.length > 0 ? `/${segments[0]}/` : '/';
 
-    // Redirect immediately
-    location.replace(repoRoot);
+    location.replace(redirectTo);
   </script>
 </head>
 <body>
-  <p>Redirecting you to the app…</p>
+  <p>Page not found. Redirecting you to the app…</p>
 </body>
 </html>
-
