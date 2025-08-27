@@ -1,20 +1,27 @@
 
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta http-equiv="refresh" content="0; URL=." />
-    <meta charset="UTF-8" />
-    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, shrink-to-fit=no"
-    />
-    <title>Stlite App</title>
-  </head>
-  <body>
-  <div id="root">
-    <p> Redirecting you to the app </p>
-  </div>
-  </body>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Redirecting…</title>
+  <script>
+    // Determine the root URL
+    const pathSegments = location.pathname.split('/').filter(Boolean);
+
+    // For user/org site, root is "/"
+    // For project site, root is "/repo-name/"
+    const repoRoot = pathSegments.length > 0 && pathSegments[0] !== location.hostname
+      ? `/${pathSegments[0]}/`
+      : '/';
+
+    // Redirect immediately
+    location.replace(repoRoot);
+  </script>
+</head>
+<body>
+  <p>Redirecting you to the app…</p>
+</body>
 </html>
-    
+
